@@ -3,6 +3,9 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using JetBrains.Annotations;
 using LightWeight.PerformanceCounters.Resources;
 
 namespace LightWeight.PerformanceCounters
@@ -12,14 +15,10 @@ namespace LightWeight.PerformanceCounters
     /// </summary>
     public sealed class PerformanceCounterCategory
     {
-        private string _categoryName;
-        private string _categoryHelp;
+        private static PerfLib _perfLib;
+        private static object SyncRoot = new object();
 
-        /// <summary>
-        ///     Creates a PerformanceCounterCategory object for given category.
-        ///     Uses the given machine name.
-        /// </summary>
-        internal PerformanceCounterCategory(string categoryName)
+        private PerformanceCounterCategory([NotNull] PerfLib perfLib, [NotNull] string categoryName, [NotNull] string categoryHelp, PerformanceCounterCategoryType categoryType)
         {
             if (categoryName == null)
                 throw new ArgumentNullException(nameof(categoryName));
@@ -27,70 +26,74 @@ namespace LightWeight.PerformanceCounters
             if (categoryName.Length == 0)
                 throw new ArgumentException(SR.Format(SR.InvalidParameter, nameof(categoryName), categoryName), nameof(categoryName));
 
-            _categoryName = categoryName;
+            CategoryName = categoryName;
+            CategoryHelp = categoryHelp;
+            CategoryType = categoryType;
+        }
+
+        private static PerfLib PerfLibInstance
+        {
+            get
+            {
+                lock (SyncRoot)
+                {
+                    if (_perfLib == null)
+                    {
+                        _perfLib = PerfLib.GetOrCreate(new CultureInfo(Constants.EnglishLCID));
+                    }
+                }
+
+                return _perfLib;
+            }
+        }
+
+        [NotNull]
+        public static PerformanceCounterCategory Create([NotNull] string categoryName)
+        {
+            if (categoryName == null) throw new ArgumentNullException(nameof(categoryName));
+
+            var help = PerfLibInstance.GetCategoryHelp(categoryName);
+            PerformanceCounterCategoryType type;
+            using (var categorySample = PerfLibInstance.GetCategorySample(categoryName))
+            {
+
+                // If we get MultiInstance, we can be confident it is correct.  If it is single instance, though
+                // we need to check if is a custom category and if the IsMultiInstance value is set in the registry.
+                // If not we return Unknown
+                if (categorySample._isMultiInstance)
+                {
+                    type = PerformanceCounterCategoryType.MultiInstance;
+                }
+                else
+                {
+                    type = PerformanceCounterCategoryType.SingleInstance;
+                }
+            }
+
+            return new PerformanceCounterCategory(PerfLibInstance, categoryName, help, type);
         }
 
         /// <summary>
         ///     Gets/sets the Category name
         /// </summary>
-        public string CategoryName
-        {
-            get
-            {
-                return _categoryName;
-            }
-
-        }
+        public string CategoryName { get; }
 
         /// <summary>
         ///     Gets/sets the Category help
         /// </summary>
-        public string CategoryHelp
-        {
-            get
-            {
-                if (_categoryName == null)
-                    throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
+        public string CategoryHelp { get; }
 
-                if (_categoryHelp == null)
-                    _categoryHelp = PerformanceCounterLib.GetCategoryHelp(_categoryName);
-
-                return _categoryHelp;
-            }
-        }
-
-        public PerformanceCounterCategoryType CategoryType
-        {
-            get
-            {
-                using (var categorySample = PerformanceCounterLib.GetCategorySample(_categoryName))
-                {
-
-                    // If we get MultiInstance, we can be confident it is correct.  If it is single instance, though
-                    // we need to check if is a custom category and if the IsMultiInstance value is set in the registry.
-                    // If not we return Unknown
-                    if (categorySample._isMultiInstance)
-                        return PerformanceCounterCategoryType.MultiInstance;
-                    if (PerformanceCounterLib.IsCustomCategory(_categoryName))
-                        return PerformanceCounterLib.GetCategoryType(_categoryName);
-                    return PerformanceCounterCategoryType.SingleInstance;
-                }
-            }
-        }
+        public PerformanceCounterCategoryType CategoryType { get; }
 
 
         /// <summary>
         ///     Returns true if the counter is registered for this category
         /// </summary>
-        public bool CounterExists(string counterName)
+        public bool CounterExists([NotNull] string counterName)
         {
-            if (counterName == null)
-                throw new ArgumentNullException(nameof(counterName));
+            if (counterName == null) throw new ArgumentNullException(nameof(counterName));
 
-            if (_categoryName == null)
-                throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
-
-            return PerformanceCounterLib.CounterExists(_categoryName, counterName);
+            return _perfLib.CounterExists(CategoryName, counterName);
         }
 
 
@@ -108,7 +111,7 @@ namespace LightWeight.PerformanceCounters
             if (categoryName.Length == 0)
                 throw new ArgumentException(SR.Format(SR.InvalidParameter, nameof(categoryName), categoryName), nameof(categoryName));
 
-            return PerformanceCounterLib.CounterExists(categoryName, counterName);
+            return PerfLibInstance.CounterExists(categoryName, counterName);
         }
 
         /// <summary>
@@ -122,10 +125,7 @@ namespace LightWeight.PerformanceCounters
             if (categoryName.Length == 0)
                 throw new ArgumentException(SR.Format(SR.InvalidParameter, nameof(categoryName), categoryName), nameof(categoryName));
 
-            if (PerformanceCounterLib.IsCustomCategory(categoryName))
-                return true;
-
-            return PerformanceCounterLib.CategoryExists(categoryName);
+            return PerfLibInstance.CategoryExists(categoryName);
         }
 
         /// <summary>
@@ -134,15 +134,20 @@ namespace LightWeight.PerformanceCounters
         /// <internalonly/>
         internal static string[] GetCounterInstances(string categoryName)
         {
-            using (var categorySample = PerformanceCounterLib.GetCategorySample(categoryName))
+            using (var categorySample = PerfLibInstance.GetCategorySample(categoryName))
             {
                 if (categorySample._instanceNameTable.Count == 0)
+                {
                     return Array.Empty<string>();
+                }
 
                 var instanceNames = new string[categorySample._instanceNameTable.Count];
                 categorySample._instanceNameTable.Keys.CopyTo(instanceNames, 0);
-                if (instanceNames.Length == 1 && instanceNames[0] == PerformanceCounterLib.SingleInstanceName)
+
+                if (instanceNames.Length == 1 && instanceNames[0] == Constants.SingleInstanceName)
+                {
                     return Array.Empty<string>();
+                }
 
                 return instanceNames;
             }
@@ -151,31 +156,28 @@ namespace LightWeight.PerformanceCounters
         /// <summary>
         ///     Returns an array of counters in this category.  The counter must have only one instance.
         /// </summary>
-        public PerformanceCounter[] GetCounters()
+        public IReadOnlyList<PerformanceCounter> GetCounters()
         {
-            if (GetInstanceNames().Length != 0)
-                throw new ArgumentException(SR.Format(SR.InstanceNameRequired));
+            if (GetInstanceNames().Length != 0) throw new ArgumentException(SR.Format(SR.InstanceNameRequired));
+
             return GetCounters("");
         }
 
         /// <summary>
         ///     Returns an array of counters in this category for the given instance.
         /// </summary>
-        public PerformanceCounter[] GetCounters(string instanceName)
+        public IReadOnlyList<PerformanceCounter> GetCounters([NotNull] string instanceName)
         {
-            if (instanceName == null)
-                throw new ArgumentNullException(nameof(instanceName));
-
-            if (_categoryName == null)
-                throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
-
+            if (instanceName == null) throw new ArgumentNullException(nameof(instanceName));
             if (instanceName.Length != 0 && !InstanceExists(instanceName))
-                throw new InvalidOperationException(SR.Format(SR.MissingInstance, instanceName, _categoryName));
+                throw new InvalidOperationException(SR.Format(SR.MissingInstance, instanceName, CategoryName));
 
-            var counterNames = PerformanceCounterLib.GetCounters(_categoryName);
-            var counters = new PerformanceCounter[counterNames.Length];
+            var counterNames = PerfLibInstance.GetCounters(CategoryName);
+            var counters = new PerformanceCounter[counterNames.Count];
             for (var index = 0; index < counters.Length; index++)
-                counters[index] = new PerformanceCounter(_categoryName, counterNames[index], instanceName, true);
+            {
+                counters[index] = PerformanceCounter.Create(CategoryName, counterNames[index], instanceName);
+            }
 
             return counters;
         }
@@ -186,10 +188,12 @@ namespace LightWeight.PerformanceCounters
         /// </summary>
         public static PerformanceCounterCategory[] GetCategories()
         {
-            var categoryNames = PerformanceCounterLib.GetCategories();
+            var categoryNames = PerfLibInstance.GetCategories();
             var categories = new PerformanceCounterCategory[categoryNames.Length];
             for (var index = 0; index < categories.Length; index++)
-                categories[index] = new PerformanceCounterCategory(categoryNames[index]);
+            {
+                categories[index] = Create(categoryNames[index]);
+            }
 
             return categories;
         }
@@ -199,24 +203,17 @@ namespace LightWeight.PerformanceCounters
         /// </summary>
         public string[] GetInstanceNames()
         {
-            if (_categoryName == null)
-                throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
-
-            return GetCounterInstances(_categoryName);
+            return GetCounterInstances(CategoryName);
         }
 
         /// <summary>
         ///     Returns true if the instance already exists for this category.
         /// </summary>
-        public bool InstanceExists(string instanceName)
+        public bool InstanceExists([NotNull] string instanceName)
         {
-            if (instanceName == null)
-                throw new ArgumentNullException(nameof(instanceName));
+            if (instanceName == null) throw new ArgumentNullException(nameof(instanceName));
 
-            if (_categoryName == null)
-                throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
-
-            using (var categorySample = PerformanceCounterLib.GetCategorySample(_categoryName))
+            using (var categorySample = PerfLibInstance.GetCategorySample(CategoryName))
             {
                 return categorySample._instanceNameTable.ContainsKey(instanceName);
             }
@@ -226,18 +223,13 @@ namespace LightWeight.PerformanceCounters
         /// <summary>
         ///     Returns true if the instance already exists for this category and machine specified.
         /// </summary>
-        public static bool InstanceExists(string instanceName, string categoryName)
+        public static bool InstanceExists([NotNull] string instanceName, [NotNull] string categoryName)
         {
-            if (instanceName == null)
-                throw new ArgumentNullException(nameof(instanceName));
+            if (instanceName == null) throw new ArgumentNullException(nameof(instanceName));
+            if (categoryName == null) throw new ArgumentNullException(nameof(categoryName));
+            if (categoryName.Length == 0) throw new ArgumentException(SR.Format(SR.InvalidParameter, nameof(categoryName), categoryName), nameof(categoryName));
 
-            if (categoryName == null)
-                throw new ArgumentNullException(nameof(categoryName));
-
-            if (categoryName.Length == 0)
-                throw new ArgumentException(SR.Format(SR.InvalidParameter, nameof(categoryName), categoryName), nameof(categoryName));
-
-            var category = new PerformanceCounterCategory(categoryName);
+            var category = PerformanceCounterCategory.Create(categoryName);
             return category.InstanceExists(instanceName);
         }
 
@@ -247,10 +239,10 @@ namespace LightWeight.PerformanceCounters
         /// </summary>
         public InstanceDataCollectionCollection ReadCategory()
         {
-            if (_categoryName == null)
+            if (CategoryName == null)
                 throw new InvalidOperationException(SR.Format(SR.CategoryNameNotSet));
 
-            using (var categorySample = PerformanceCounterLib.GetCategorySample(_categoryName))
+            using (var categorySample = PerfLibInstance.GetCategorySample(CategoryName))
             {
                 return categorySample.ReadCategory();
             }

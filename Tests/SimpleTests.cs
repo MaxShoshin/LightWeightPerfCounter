@@ -18,7 +18,7 @@ namespace Tests
         [Fact]
         public void Read_Processor_Usage()
         {
-            var counter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+            var counter = PerformanceCounter.Create("Processor", "% Processor Time", "_Total");
 
             for (int i = 0; i < 100; i++)
             {

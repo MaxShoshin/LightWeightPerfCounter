@@ -1,7 +1,9 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using LightWeight.PerformanceCounters.Resources;
+
+#if !netcoreapp
+using MemoryMarshal = LightWeight.PerformanceCounters.Extensions;
+#endif
 
 namespace LightWeight.PerformanceCounters
 {
@@ -36,12 +38,12 @@ namespace LightWeight.PerformanceCounters
         {
             if (_size == 4)
             {
-                return PerformanceCounterLib.Read<uint>(data.Slice(_offset));
+                return MemoryMarshal.Read<uint>(data.Slice(_offset));
             }
 
             if (_size == 8)
             {
-                return PerformanceCounterLib.Read<long>(data.Slice(_offset));
+                return MemoryMarshal.Read<long>(data.Slice(_offset));
             }
 
             return -1;

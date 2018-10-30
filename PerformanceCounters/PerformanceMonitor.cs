@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using JetBrains.Annotations;
 using LightWeight.PerformanceCounters.Resources;
 
 namespace LightWeight.PerformanceCounters
@@ -11,9 +12,16 @@ namespace LightWeight.PerformanceCounters
     {
         private PerformanceDataRegistryKey perfDataKey;
 
-        internal PerformanceMonitor()
+        private PerformanceMonitor()
         {
-            Init();
+        }
+
+        [NotNull]
+        public static PerformanceMonitor Create()
+        {
+            var monitor = new PerformanceMonitor();
+            monitor.Init();
+            return monitor;
         }
 
         private void Init()
@@ -44,7 +52,8 @@ namespace LightWeight.PerformanceCounters
         // we wait may not be sufficient if the Win32 code keeps running into this deadlock again
         // and again. A condition very rare but possible in theory. We would get back to the user
         // in this case with InvalidOperationException after the wait time expires.
-        internal byte[] GetData(string item)
+        [NotNull]
+        internal byte[] GetData([NotNull] string item)
         {
             var waitRetries = 17;   //2^16*10ms == approximately 10mins
             var waitSleep = 0;

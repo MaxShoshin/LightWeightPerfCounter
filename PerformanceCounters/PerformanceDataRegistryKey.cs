@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.IO;
+using JetBrains.Annotations;
 using LightWeight.PerformanceCounters.Resources;
 using Microsoft.Win32.SafeHandles;
 
@@ -18,14 +19,18 @@ namespace LightWeight.PerformanceCounters
             _keyHandle = keyHandle;
         }
 
+        [NotNull]
         public static PerformanceDataRegistryKey OpenLocal()
         {
             var key = new SafeRegistryHandle(new IntPtr(PerformanceData), true);
             return new PerformanceDataRegistryKey(key);
         }
 
-        public byte[] GetValue(string name)
+        [NotNull]
+        public byte[] GetValue([NotNull] string name)
         {
+            if (name == null) throw new ArgumentNullException(nameof(name));
+
             var size = 65000;
             var sizeInput = size;
 

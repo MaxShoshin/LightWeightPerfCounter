@@ -3,9 +3,10 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.ComponentModel;
+using System.Buffers;
 using System.Diagnostics;
-using System.Threading;
+using System.Globalization;
+using JetBrains.Annotations;
 using LightWeight.PerformanceCounters.Resources;
 
 namespace LightWeight.PerformanceCounters
@@ -18,116 +19,63 @@ namespace LightWeight.PerformanceCounters
     ///     This class is a part of a larger framework, that includes the perf dll object and
     ///     perf service.
     /// </summary>
-    public sealed class PerformanceCounter : Component, ISupportInitialize
+    public sealed class PerformanceCounter
     {
-        private PerformanceCounterInstanceLifetime _instanceLifetime = PerformanceCounterInstanceLifetime.Global;
-
         private bool _initialized;
         private string _helpMsg;
         private int _counterType = -1;
 
-        // Cached old sample
         private CounterSample _oldSample = CounterSample.Empty;
 
-        private object _instanceLockObject;
-        private object InstanceLockObject
-        {
-            get
-            {
-                if (_instanceLockObject == null)
-                {
-                    var o = new object();
-                    Interlocked.CompareExchange(ref _instanceLockObject, o, null);
-                }
-                return _instanceLockObject;
-            }
-        }
+        private readonly object _instanceLockObject = new object();
+        private readonly PerfLib _perfLib = PerfLib.GetOrCreate(new CultureInfo(Constants.EnglishLCID));
 
         /// <summary>
         ///     Creates the Performance Counter Object
         /// </summary>
-        public PerformanceCounter(string categoryName, string counterName, string instanceName)
+        private PerformanceCounter(string categoryName, string counterName, string instanceName)
         {
             CategoryName = categoryName;
             CounterName = counterName;
             InstanceName = instanceName;
-            Initialize();
-            GC.SuppressFinalize(this);
         }
 
-        internal PerformanceCounter(string categoryName, string counterName, string instanceName, bool skipInit)
+        [NotNull]
+        public static PerformanceCounter Create([NotNull] string categoryName, [NotNull] string counterName, [NotNull] string instanceName = "")
         {
-            CategoryName = categoryName;
-            CounterName = counterName;
-            InstanceName = instanceName;
-            _initialized = true;
-            GC.SuppressFinalize(this);
+            if (categoryName == null) throw new ArgumentNullException(nameof(categoryName));
+            if (counterName == null) throw new ArgumentNullException(nameof(counterName));
+            if (instanceName == null) throw new ArgumentNullException(nameof(instanceName));
+
+            var perfCounter = new PerformanceCounter(categoryName, counterName, instanceName);
+
+            perfCounter.Initialize();
+
+            return perfCounter;
         }
 
         /// <summary>
-        ///     Creates the Performance Counter Object, assumes that it's a single instance
-        /// </summary>
-        public PerformanceCounter(string categoryName, string counterName) :
-            this(categoryName, counterName, "")
-        {
-        }
-
-        /// <summary>
-        ///     Returns the performance category name for this performance counter
+        ///    Returns the performance category name for this performance counter
         /// </summary>
         public string CategoryName { get; }
 
         /// <summary>
-        ///     Returns the description message for this performance counter
+        ///    Returns the description message for this performance counter
         /// </summary>
-        public string CounterHelp
-        {
-            get
-            {
-                Initialize();
-
-                if (_helpMsg == null)
-                    _helpMsg = PerformanceCounterLib.GetCounterHelp(CategoryName, CounterName);
-
-                return _helpMsg;
-            }
-        }
+        public string CounterHelp => _helpMsg;
 
         /// <summary>
-        ///     Sets/returns the performance counter name for this performance counter
+        ///    Returns the performance counter name for this performance counter
         /// </summary>
         public string CounterName { get; }
 
         /// <summary>
-        ///     Sets/Returns the counter type for this performance counter
+        ///    Returns the counter type for this performance counter
         /// </summary>
-        public PerformanceCounterType CounterType
-        {
-            get
-            {
-                if (_counterType == -1)
-                {
-                    // This is the same thing that NextSample does, except that it doesn't try to get the actual counter
-                    // value.  If we wanted the counter value, we would need to have an instance name. 
-                    Initialize();
-                    using (var categorySample = PerformanceCounterLib.GetCategorySample(CategoryName))
-                    {
-                        var counterSample = categorySample.GetCounterDefinitionSample(CounterName);
-                        _counterType = counterSample._counterType;
-                    }
-                }
-
-                return (PerformanceCounterType)_counterType;
-            }
-        }
-
-        public PerformanceCounterInstanceLifetime InstanceLifetime
-        {
-            get { return _instanceLifetime; }
-        }
+        public PerformanceCounterType CounterType => (PerformanceCounterType)_counterType;
 
         /// <summary>
-        ///     Sets/returns an instance name for this performance counter
+        ///     Returns an instance name for this performance counter
         /// </summary>
         public string InstanceName { get; }
 
@@ -137,108 +85,56 @@ namespace LightWeight.PerformanceCounters
         ///     the raw value is sufficient.   Note that this only works for custom counters created using
         ///     this component,  non-custom counters will throw an exception if this property is accessed.
         /// </summary>
-        public long RawValue
-        {
-            get
-            {
-                //No need to initialize or Demand, since NextSample already does.
-                return NextSample().RawValue;
-            }
-        }
+        public long RawValue => NextSample().RawValue;
 
-        /// <summary>
-        /// </summary>
-        public void BeginInit()
-        {
-            Close();
-        }
-
-        /// <summary>
-        ///     Frees all the resources allocated by this counter
-        /// </summary>
-        public void Close()
-        {
-            _helpMsg = null;
-            _oldSample = CounterSample.Empty;
-            _initialized = false;
-            _counterType = -1;
-        }
-
-        /// <internalonly/>
-        /// <summary>
-        /// </summary>
-        protected override void Dispose(bool disposing)
-        {
-            // safe to call while finalizing or disposing
-            if (disposing)
-            {
-                //Dispose managed and unmanaged resources
-                Close();
-            }
-
-            base.Dispose(disposing);
-        }
-
-        /// <summary>
-        /// </summary>
-        public void EndInit()
-        {
-            Initialize();
-        }
-
-        private void Initialize()
-        {
-            // Keep this method small so the JIT will inline it.
-            if (!_initialized && !DesignMode)
-            {
-                InitializeImpl();
-            }
-        }
 
         /// <summary>
         ///     Intializes required resources
         /// </summary>
-        private void InitializeImpl()
+        private void Initialize()
         {
-            var tookLock = false;
-            try
+            if (_initialized)
             {
-                Monitor.Enter(InstanceLockObject, ref tookLock);
+                return;
+            }
 
-                if (!_initialized)
+            lock (_instanceLockObject)
+            {
+                if (_initialized)
                 {
-                    if (CategoryName == string.Empty)
-                        throw new InvalidOperationException(SR.Format(SR.CategoryNameMissing));
-                    if (CounterName == string.Empty)
-                        throw new InvalidOperationException(SR.Format(SR.CounterNameMissing));
-
-                    if (!PerformanceCounterLib.CounterExists(CategoryName, CounterName))
-                        throw new InvalidOperationException(SR.Format(SR.CounterExists, CategoryName, CounterName));
-
-                    var categoryType = PerformanceCounterLib.GetCategoryType(CategoryName);
-                    if (categoryType == PerformanceCounterCategoryType.MultiInstance)
-                    {
-                        if (string.IsNullOrEmpty(InstanceName))
-                            throw new InvalidOperationException(SR.Format(SR.MultiInstanceOnly, CategoryName));
-                    }
-                    else if (categoryType == PerformanceCounterCategoryType.SingleInstance)
-                    {
-                        if (!string.IsNullOrEmpty(InstanceName))
-                            throw new InvalidOperationException(SR.Format(SR.SingleInstanceOnly, CategoryName));
-                    }
-
-                    if (_instanceLifetime != PerformanceCounterInstanceLifetime.Global)
-                        throw new InvalidOperationException(SR.Format(SR.InstanceLifetimeProcessonReadOnly));
-
-                    _initialized = true;
+                    return;
                 }
-            }
-            finally
-            {
-                if (tookLock)
-                    Monitor.Exit(InstanceLockObject);
-            }
 
+                if (CategoryName == string.Empty)
+                    throw new InvalidOperationException(SR.Format(SR.CategoryNameMissing));
+                if (CounterName == string.Empty)
+                    throw new InvalidOperationException(SR.Format(SR.CounterNameMissing));
+
+                if (!_perfLib.CategoryExists(CategoryName))
+                    throw new InvalidOperationException(SR.Format(SR.MissingCategory));
+
+                if (!_perfLib.CounterExists(CategoryName, CounterName))
+                    throw new InvalidOperationException(SR.Format(SR.CounterExists, CategoryName, CounterName));
+
+                var categoryType = _perfLib.GetCategoryType(CategoryName);
+                if (categoryType == PerformanceCounterCategoryType.MultiInstance)
+                {
+                    if (string.IsNullOrEmpty(InstanceName))
+                        throw new InvalidOperationException(SR.Format(SR.MultiInstanceOnly, CategoryName));
+                }
+                else if (categoryType == PerformanceCounterCategoryType.SingleInstance)
+                {
+                    if (!string.IsNullOrEmpty(InstanceName))
+                        throw new InvalidOperationException(SR.Format(SR.SingleInstanceOnly, CategoryName));
+                }
+
+                _helpMsg = _perfLib.GetCounterHelp(CategoryName, CounterName);
+
+                // To read _counterType
+                NextSample();
+
+                _initialized = true;
+            }
         }
 
         // Will cause an update, raw value
@@ -247,10 +143,10 @@ namespace LightWeight.PerformanceCounters
         /// </summary>
         public CounterSample NextSample()
         {
-            Initialize();
+            var data = _perfLib.GetPerformanceData(CategoryName);
 
-
-            using (var categorySample = PerformanceCounterLib.GetCategorySample(CategoryName))
+            ArrayPool<byte>.Shared.Return(data);
+            using (var categorySample = _perfLib.GetCategorySample(CategoryName))
             {
                 var counterSample = categorySample.GetCounterDefinitionSample(CounterName);
                 _counterType = counterSample._counterType;
@@ -276,7 +172,6 @@ namespace LightWeight.PerformanceCounters
         /// </summary>
         public float NextValue()
         {
-            //No need to initialize or Demand, since NextSample already does.
             var newSample = NextSample();
             var retVal = 0.0f;
 

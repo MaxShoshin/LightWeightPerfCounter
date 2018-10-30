@@ -35,6 +35,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="JetBrains.Annotations, Version=2018.2.1.0, Culture=neutral, PublicKeyToken=1010a0d8d6380325">
+      <HintPath>..\packages\JetBrains.Annotations.2018.2.1\lib\net20\JetBrains.Annotations.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51">
@@ -61,10 +65,12 @@
   <ItemGroup>
     <Compile Include="CategoryEntry.cs" />
     <Compile Include="CategorySample.cs" />
-    <Compile Include="Consts.cs" />
+    <Compile Include="CategorySample2.cs" />
+    <Compile Include="Constants.cs" />
     <Compile Include="CounterDefinitionSample.cs" />
     <Compile Include="CounterSample.cs" />
     <Compile Include="CounterSampleCalculator.cs" />
+    <Compile Include="Extensions.cs" />
     <Compile Include="InstanceData.cs" />
     <Compile Include="InstanceDataCollection.cs" />
     <Compile Include="Interop\Interop.Errors.cs" />
@@ -78,6 +84,7 @@
     <Compile Include="Interop\Interop.RegOpenKeyEx.cs" />
     <Compile Include="Interop\Interop.RegQueryValueEx.cs" />
     <Compile Include="Interop\Interop.WaitForSingleObject.cs" />
+    <Compile Include="PerfLib.cs" />
     <Compile Include="PerformanceCounter.cs" />
     <Compile Include="PerformanceCounterCategory.cs" />
     <Compile Include="PerformanceCounterCategoryType.cs" />

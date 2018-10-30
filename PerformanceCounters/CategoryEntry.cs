@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace LightWeight.PerformanceCounters
 {
     internal class CategoryEntry
@@ -6,6 +8,7 @@ namespace LightWeight.PerformanceCounters
         internal int HelpIndex;
         internal int[] CounterIndexes;
         internal int[] HelpIndexes;
+        internal string NameIndexStr;
 
         internal CategoryEntry(in Interop.Interop.Advapi32.PERF_OBJECT_TYPE perfObject)
         {
@@ -13,6 +16,7 @@ namespace LightWeight.PerformanceCounters
             HelpIndex = perfObject.ObjectHelpTitleIndex;
             CounterIndexes = new int[perfObject.NumCounters];
             HelpIndexes = new int[perfObject.NumCounters];
+            NameIndexStr = NameIndex.ToString(CultureInfo.InvariantCulture);
         }
     }
 }

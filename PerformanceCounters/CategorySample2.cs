@@ -12,27 +12,23 @@ using MemoryMarshal = LightWeight.PerformanceCounters.Extensions;
 
 namespace LightWeight.PerformanceCounters
 {
-    internal class CategorySample : IDisposable
+    internal class CategorySample2 : IDisposable
     {
         internal readonly long _systemFrequency;
         internal readonly long _timeStamp;
         internal readonly long _timeStamp100nSec;
         internal readonly long _counterFrequency;
         internal readonly long _counterTimeStamp;
-        internal readonly Dictionary<int, CounterDefinitionSample> _counterTable;
-        internal readonly Dictionary<string, int> _instanceNameTable;
         internal readonly bool _isMultiInstance;
         private readonly CategoryEntry _entry;
-        private readonly PerfLib _library;
         private int _disposed;
         private readonly byte[] _data;
 
-        internal CategorySample(byte[] rawData, CategoryEntry entry, PerfLib library)
+        internal CategorySample2(byte[] rawData, CategoryEntry entry)
         {
             _data = rawData;
             ReadOnlySpan<byte> data = rawData;
             _entry = entry;
-            _library = library;
             var categoryIndex = entry.NameIndex;
 
             ref readonly var dataBlock = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_DATA_BLOCK>(data);
@@ -44,8 +40,6 @@ namespace LightWeight.PerformanceCounters
             var numPerfObjects = dataBlock.NumObjectTypes;
             if (numPerfObjects == 0)
             {
-                _counterTable = new Dictionary<int, CounterDefinitionSample>();
-                _instanceNameTable = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 return;
             }
 
@@ -84,7 +78,7 @@ namespace LightWeight.PerformanceCounters
             pos += perfObject.HeaderLength;
 
             var samples = new CounterDefinitionSample[counterNumber];
-            _counterTable = new Dictionary<int, CounterDefinitionSample>(counterNumber);
+
             for (var index = 0; index < samples.Length; ++index)
             {
                 ref readonly var perfCounter = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_COUNTER_DEFINITION>(data.Slice(pos));
@@ -110,9 +104,6 @@ namespace LightWeight.PerformanceCounters
             // now set up the InstanceNameTable.
             if (!_isMultiInstance)
             {
-                _instanceNameTable = new Dictionary<string, int>(1, StringComparer.OrdinalIgnoreCase);
-                _instanceNameTable[Constants.SingleInstanceName] = 0;
-
                 for (var index = 0; index < samples.Length; ++index)
                 {
                     samples[index].SetInstanceValue(0, data.Slice(pos));
@@ -120,34 +111,9 @@ namespace LightWeight.PerformanceCounters
             }
             else
             {
-                string[] parentInstanceNames = null;
-                _instanceNameTable = new Dictionary<string, int>(instanceNumber, StringComparer.OrdinalIgnoreCase);
                 for (var i = 0; i < instanceNumber; i++)
                 {
                     ref readonly var perfInstance = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_INSTANCE_DEFINITION>(data.Slice(pos));
-                    if (perfInstance.ParentObjectTitleIndex > 0 && parentInstanceNames == null)
-                        parentInstanceNames = GetInstanceNamesFromIndex(perfInstance.ParentObjectTitleIndex);
-
-                    var instanceName = Interop.Interop.Advapi32.PERF_INSTANCE_DEFINITION.GetName(in perfInstance, data.Slice(pos)).ToString();
-                    if (parentInstanceNames != null && perfInstance.ParentObjectInstance >= 0 && perfInstance.ParentObjectInstance < parentInstanceNames.Length - 1)
-                        instanceName = parentInstanceNames[perfInstance.ParentObjectInstance] + "/" + instanceName;
-
-                    //In some cases instance names are not unique (Process), same as perfmon
-                    //generate a unique name.
-                    var newInstanceName = instanceName;
-                    var newInstanceNumber = 1;
-                    while (true)
-                    {
-                        if (!_instanceNameTable.ContainsKey(newInstanceName))
-                        {
-                            _instanceNameTable[newInstanceName] = i;
-                            break;
-                        }
-
-                        newInstanceName = instanceName + "#" + newInstanceNumber.ToString(CultureInfo.InvariantCulture);
-                        ++newInstanceNumber;
-                    }
-
 
                     pos += perfInstance.ByteLength;
 
@@ -159,60 +125,6 @@ namespace LightWeight.PerformanceCounters
             }
         }
 
-        internal string[] GetInstanceNamesFromIndex(int categoryIndex)
-        {
-            CheckDisposed();
-
-            ReadOnlySpan<byte> data = _library.GetPerformanceData(categoryIndex.ToString(CultureInfo.InvariantCulture));
-
-            ref readonly var dataBlock = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_DATA_BLOCK>(data);
-            var pos = dataBlock.HeaderLength;
-            var numPerfObjects = dataBlock.NumObjectTypes;
-
-            var foundCategory = false;
-            for (var index = 0; index < numPerfObjects; index++)
-            {
-                ref readonly var type = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_OBJECT_TYPE>(data.Slice(pos));
-
-                if (type.ObjectNameTitleIndex == categoryIndex)
-                {
-                    foundCategory = true;
-                    break;
-                }
-
-                pos += type.TotalByteLength;
-            }
-
-            if (!foundCategory)
-                return Array.Empty<string>();
-
-            ref readonly var perfObject = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_OBJECT_TYPE>(data.Slice(pos));
-
-            var counterNumber = perfObject.NumCounters;
-            var instanceNumber = perfObject.NumInstances;
-            pos += perfObject.HeaderLength;
-
-            if (instanceNumber == -1)
-                return Array.Empty<string>();
-
-            var samples = new CounterDefinitionSample[counterNumber];
-            for (var index = 0; index < samples.Length; ++index)
-            {
-                pos += MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_COUNTER_DEFINITION>(data.Slice(pos)).ByteLength;
-            }
-
-            var instanceNames = new string[instanceNumber];
-            for (var i = 0; i < instanceNumber; i++)
-            {
-                ref readonly var perfInstance = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_INSTANCE_DEFINITION>(data.Slice(pos));
-                instanceNames[i] = Interop.Interop.Advapi32.PERF_INSTANCE_DEFINITION.GetName(in perfInstance, data.Slice(pos)).ToString();
-                pos += perfInstance.ByteLength;
-
-                pos += MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_COUNTER_BLOCK>(data.Slice(pos)).ByteLength;
-            }
-
-            return instanceNames;
-        }
 
         internal CounterDefinitionSample GetCounterDefinitionSample(string counter)
         {
