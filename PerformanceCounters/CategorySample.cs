@@ -44,8 +44,8 @@ namespace LightWeight.PerformanceCounters
             var numPerfObjects = dataBlock.NumObjectTypes;
             if (numPerfObjects == 0)
             {
-                _counterTable = new Dictionary<int, CounterDefinitionSample>();
-                _instanceNameTable = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                _counterTable = DictionaryPool<int, CounterDefinitionSample>.Rent();
+                _instanceNameTable = DictionaryPool<string, int>.Rent();
                 return;
             }
 
@@ -84,7 +84,7 @@ namespace LightWeight.PerformanceCounters
             pos += perfObject.HeaderLength;
 
             var samples = new CounterDefinitionSample[counterNumber];
-            _counterTable = new Dictionary<int, CounterDefinitionSample>(counterNumber);
+            _counterTable = DictionaryPool<int, CounterDefinitionSample>.Rent();
             for (var index = 0; index < samples.Length; ++index)
             {
                 ref readonly var perfCounter = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_COUNTER_DEFINITION>(data.Slice(pos));
@@ -110,7 +110,7 @@ namespace LightWeight.PerformanceCounters
             // now set up the InstanceNameTable.
             if (!_isMultiInstance)
             {
-                _instanceNameTable = new Dictionary<string, int>(1, StringComparer.OrdinalIgnoreCase);
+                _instanceNameTable = DictionaryPool<string, int>.Rent();
                 _instanceNameTable[Constants.SingleInstanceName] = 0;
 
                 for (var index = 0; index < samples.Length; ++index)
@@ -121,7 +121,7 @@ namespace LightWeight.PerformanceCounters
             else
             {
                 string[] parentInstanceNames = null;
-                _instanceNameTable = new Dictionary<string, int>(instanceNumber, StringComparer.OrdinalIgnoreCase);
+                _instanceNameTable = DictionaryPool<string, int>.Rent();
                 for (var i = 0; i < instanceNumber; i++)
                 {
                     ref readonly var perfInstance = ref MemoryMarshal.AsRef<Interop.Interop.Advapi32.PERF_INSTANCE_DEFINITION>(data.Slice(pos));
@@ -278,6 +278,8 @@ namespace LightWeight.PerformanceCounters
             }
 
             ArrayPool<byte>.Shared.Return(_data);
+            DictionaryPool<int, CounterDefinitionSample>.Return(_counterTable);
+            DictionaryPool<string, int>.Return(_instanceNameTable);
         }
 
         private void CheckDisposed()

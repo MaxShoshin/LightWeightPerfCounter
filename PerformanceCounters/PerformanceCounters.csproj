@@ -84,6 +84,7 @@
     <Compile Include="Interop\Interop.RegOpenKeyEx.cs" />
     <Compile Include="Interop\Interop.RegQueryValueEx.cs" />
     <Compile Include="Interop\Interop.WaitForSingleObject.cs" />
+    <Compile Include="DictionaryPool.cs" />
     <Compile Include="PerfLib.cs" />
     <Compile Include="PerformanceCounter.cs" />
     <Compile Include="PerformanceCounterCategory.cs" />

@@ -51,7 +51,7 @@ namespace Tests
             });
         }
 
-        public void RunExperiment()
+        internal void RunExperiment()
         {
             _counter.NextValue();
 
